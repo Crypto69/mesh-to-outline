@@ -75,8 +75,10 @@ Free for non-commercial use, under the
 [PolyForm Noncommercial License 1.0.0](LICENSE). numpy comes inside the zip,
 under its own licence: see `THIRD-PARTY-NOTICES.txt` in the zip.
 
-Outside code contributions are not being accepted for now. Bug reports are
-welcome. To work on your own copy, see [DEVELOPING.md](DEVELOPING.md).
+## Contributing
+
+Bug fixes and feature improvements are welcome. Open an issue or send a pull
+request. [DEVELOPING.md](DEVELOPING.md) shows how to set up and run the tests.
 
 Part of [stlToSolid](https://stltosolid.com). Not affiliated with or endorsed by
 Autodesk. Autodesk and Autodesk Fusion are registered trademarks or trademarks of
