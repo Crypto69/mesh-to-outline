@@ -148,11 +148,9 @@ python3 tools/build_bundle.py     # the Autodesk Marketplace bundle
 
 Both need all the numpy folders first (see Requirements).
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`: it builds the zips,
-signs the Mac binaries, notarises the Mac zip, checks it as a browser download
-would see it, and publishes the release. The tag must match the manifest's
-version. An unsigned Mac zip is blocked by macOS once downloaded, so do not
-upload one by hand.
+Official releases are built, signed and notarised by a private workflow. An
+unsigned Mac zip is blocked by macOS once downloaded, so a build you make
+yourself only works from a local copy.
 
 ## Troubleshooting
 
