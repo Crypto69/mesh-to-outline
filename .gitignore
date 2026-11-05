@@ -1,0 +1,10 @@
+# numpy vendored for Fusion's interpreter (tools/vendor_numpy.py); large,
+# platform-specific, and rebuilt rather than tracked.
+/lib/
+# store build output (tools/build_bundle.py)
+/dist/
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+.pytest_cache/

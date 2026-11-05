@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mesh to Outline — help</title>
+<style>
+  body { font: 16px/1.55 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+         max-width: 50rem; margin: 2rem auto; padding: 0 1rem; color: #1d2733; background: #fff; }
+  h1 { font-size: 1.7rem; } h2 { font-size: 1.2rem; margin-top: 1.8rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+  th, td { text-align: left; vertical-align: top; padding: .45rem .5rem; border-bottom: 1px solid #dde3ea; }
+  th { background: #f3f6f9; }
+  .muted { color: #5b6773; font-size: .9rem; }
+</style>
+</head>
+<body>
+<h1>Mesh to Outline</h1>
+<p class="muted">for Autodesk&reg; Fusion&reg; &middot; version {{VERSION}}</p>
+
+<p>Mesh to Outline cuts a mesh body with a plane and draws the section as a
+normal sketch of lines, arcs, circles and fitted splines, ready to extrude,
+loft or dimension. It can also draw a whole stack of sections between two
+picks and extrude them into one solid body.</p>
+
+<p>It runs only on your computer. It collects no data and needs no internet
+connection. <a href="privacy.html">Privacy policy</a>.</p>
+
+<h2>Requirements</h2>
+<ul>
+  <li>The current release of Autodesk Fusion, on Windows 64-bit or macOS.</li>
+  <li>Nothing else: everything the add-in needs is inside it.</li>
+</ul>
+
+<h2>Where to find it</h2>
+<p><b>Mesh</b> tab &rarr; <b>Modify</b> panel &rarr; <b>Mesh to Outline</b>, next
+to Convert Mesh. If Fusion's Mesh panel is not found, the button is under
+<b>Utilities &rarr; Add-Ins</b> instead; the Text Commands palette says where.</p>
+<p>To turn the add-in off or on: <b>Utilities &rarr; Add-Ins &rarr; Scripts and
+Add-Ins &rarr; Add-Ins</b> tab &rarr; <b>MeshSectionSketch</b> &rarr; Stop / Run.</p>
+
+<h2>Quick start</h2>
+<ol>
+  <li><b>Insert &rarr; Insert Mesh</b>, and set the units to mm.</li>
+  <li>For one section or a stack, make a construction plane where you want the
+      cut (<b>Construct &rarr; Offset Plane</b>), or use any flat face.</li>
+  <li><b>Mesh</b> tab &rarr; <b>Modify</b> &rarr; <b>Mesh to Outline</b>.</li>
+  <li>Choose the <b>Action</b> first: <b>Single slice</b>, <b>Stack</b> or
+      <b>X-Ray</b>. Pick the mesh body, then the plane (Single slice, Stack) or
+      the start and end (X-Ray), and click <b>OK</b>.</li>
+</ol>
+
+<h2>Settings</h2>
+<table>
+<tr><th>Setting</th><th>Default</th><th>What it does</th></tr>
+<tr><td>Action</td><td>Single slice</td><td><b>Single slice</b>: a single sketch. <b>Stack</b>: several sketches on offset planes. <b>X-Ray</b>: a stack between a start and an end pick. It decides which picks the dialog asks for.</td></tr>
+<tr><td>Mesh body</td><td>&mdash;</td><td>The mesh body to cut.</td></tr>
+<tr><td>Plane</td><td>&mdash;</td><td>Single slice and Stack: a construction plane or a flat face to cut on.</td></tr>
+<tr><td>Start / End</td><td>&mdash;</td><td>X-Ray only: a construction plane, a flat face or a click on the mesh. The slices run parallel to the Start plane, or the End plane if Start is a mesh click, so at least one must be a plane or a flat face of a solid. A click on a flat mesh face snaps to that face.</td></tr>
+<tr><td>Spacing</td><td>0.2 mm</td><td>Stack and X-Ray: the distance between sketches.</td></tr>
+<tr><td>Sections (count)</td><td>10</td><td>Stack only: how many sketches, 2 to 400.</td></tr>
+<tr><td>Direction</td><td>Along the normal (+)</td><td>Stack only: along the plane's normal, against it, or both sides.</td></tr>
+<tr><td>Fit tolerance</td><td>0.08 mm</td><td>How far a fitted curve may sit off the raw section.</td></tr>
+<tr><td>Join gaps up to</td><td>2.5 mm</td><td>Loose ends closer than this are joined, so an outline broken only by hairline cracks comes back as one closed profile. 0 draws exactly what Fusion's own mesh section draws.</td></tr>
+<tr><td>Trim slivers up to</td><td>0 mm</td><td>Cuts out thin out-and-back slivers where the mesh has a double skin. 0.3 mm is a good start on a leaky mesh; 0 leaves the outline as traced.</td></tr>
+<tr><td>Outline only</td><td>off</td><td>Keep just the outer outline: loose open pieces and inner loops are skipped, so each sketch is one clean profile.</td></tr>
+<tr><td>Extrude each slice</td><td>off</td><td>Stack and X-Ray: each sketch is extruded to the next slice and joined into one stepped solid body.</td></tr>
+<tr><td>Hide mesh after</td><td>off</td><td>Hides the mesh body when done. The mesh is never deleted.</td></tr>
+</table>
+
+<h2>Messages you may see</h2>
+<table>
+<tr><th>Message</th><th>What to do</th></tr>
+<tr><td>Empty cut skipped</td><td>The plane misses the mesh there.</td></tr>
+<tr><td>WARNING: the outline did not close in N slices</td><td>The mesh has holes wider than Join gaps at those slices. Raise Join gaps to the value the warning gives and run again.</td></tr>
+<tr><td>WARNING: N slabs could not be extruded</td><td>The sketch was drawn, but Fusion found no profile to extrude there. The per-slice list says why.</td></tr>
+<tr><td>Autodesk Fusion has updated its Python</td><td>Update Mesh to Outline from the Autodesk Marketplace.</td></tr>
+<tr><td>Mesh to Outline is incomplete</td><td>Reinstall Mesh to Outline from the Autodesk Marketplace.</td></tr>
+<tr><td>Another add-in has loaded an old copy of numpy</td><td>Turn that add-in off, restart Fusion, and try again.</td></tr>
+</table>
+
+<h2>Undo and uninstall</h2>
+<p>Each run adds sketches (and, if ticked, one body) to your design; Undo or
+deleting them removes them. To uninstall, use the Autodesk Marketplace
+uninstaller (Windows: Apps &amp; features; macOS: remove the
+<code>MeshToOutline.bundle</code> folder from
+<code>~/Library/Application Support/Autodesk/ApplicationPlugins</code>).</p>
+
+<h2>Support</h2>
+<p>Email <a href="mailto:{{SUPPORT_EMAIL}}">{{SUPPORT_EMAIL}}</a>. Please include
+your Fusion version, your operating system, and the lines in the Text Commands
+palette that start with <code>MeshSectionSketch:</code>.
+More at <a href="https://stltosolid.com">stltosolid.com</a>.</p>
+
+<p class="muted">Autodesk and Autodesk Fusion are registered trademarks or
+trademarks of Autodesk, Inc., and/or its subsidiaries and/or affiliates.
+stlToSolid is not affiliated with or endorsed by Autodesk. Third-party
+licences: <a href="THIRD-PARTY-NOTICES.txt">THIRD-PARTY-NOTICES.txt</a>.</p>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+    "autodeskProduct": "Fusion",
+    "type": "addin",
+    "id": "887eb97a-17da-49c5-88a2-84214e0c2f80",
+    "author": "Chris Venter",
+    "description": {
+        "": "Mesh to Outline: cut a mesh body with a plane and draw the section as a sketch of lines, arcs, circles and fitted splines (Create Mesh Section Sketch + Fit Curves to Mesh Section, in one go)."
+    },
+    "version": "1.0.0",
+    "runOnStartup": true,
+    "supportedOS": "windows|mac",
+    "editEnabled": true
+}

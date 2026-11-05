@@ -1,0 +1,120 @@
+name: Release
+
+# A v* tag builds, signs, notarises and publishes. Run by hand, it does all of
+# that except publishing. Never ships an unsigned Mac zip: macOS blocks numpy
+# in a browser download without the signature and notarisation.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-python@v5
+        id: py314
+        with:
+          python-version: '3.14'
+
+      - name: Tag matches the manifest
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version="$(python3 -c "import json;print(json.load(open('MeshSectionSketch.manifest'))['version'])")"
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME but manifest says $version"; exit 1; }
+
+      - name: Vendor numpy
+        run: |
+          python3 -m pip --version
+          for plat in macos_arm64 macos_x86_64 win_amd64; do
+            python3 tools/vendor_numpy.py --platform "$plat"
+          done
+
+      - name: Desktop tests
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -q pytest numpy trimesh
+          .venv/bin/python -m pytest desktop_tests -q
+
+      - name: Import the Developer ID certificate into a throwaway keychain
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          [ -n "$MACOS_CERT_P12" ] || { echo "::error::signing secrets are not set"; exit 1; }
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          pw="$(uuidgen)"
+          security create-keychain -p "$pw" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$pw" "$keychain"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          line="$(security find-identity -v -p codesigning "$keychain" | grep -F "Developer ID Application")"
+          [ "$(printf '%s' "$line" | grep -c .)" -eq 1 ] || { echo "::error::expected one Developer ID certificate"; exit 1; }
+          echo "CODESIGN_IDENTITY=$(printf '%s\n' "$line" | sed -n 's/^ *[0-9][0-9]*) \([0-9A-Fa-f]\{40\}\) .*/\1/p')" >> "$GITHUB_ENV"
+
+      - name: Build the zips, Mac binaries signed
+        run: python3 tools/build_release.py --sign "$CODESIGN_IDENTITY"
+
+      - name: Notarise the Mac zip
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          key="$RUNNER_TEMP/AuthKey.p8"
+          echo "$APPLE_API_KEY_P8" | base64 --decode > "$key"
+          out="$(xcrun notarytool submit dist/MeshToOutline-*-mac.zip --key "$key" \
+                 --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" --wait --timeout 30m)"
+          rm -f "$key"
+          echo "$out"
+          echo "$out" | grep -q 'status: Accepted' || { echo "::error::Apple did not accept the zip"; exit 1; }
+
+      # What a stranger gets: unzipped with the browser's quarantine flag on
+      # every file, then numpy loaded by a stock Python 3.14.
+      - name: Check the Mac zip as a browser download
+        env:
+          PY314: ${{ steps.py314.outputs.python-path }}
+        run: |
+          check="$RUNNER_TEMP/download"
+          mkdir "$check"
+          unzip -q dist/MeshToOutline-*-mac.zip -d "$check"
+          xattr -r -w com.apple.quarantine "0083;$(printf %x "$(date +%s)");Safari;$(uuidgen)" "$check"
+          folder="$check/MeshSectionSketch"
+          so="$(find "$folder/lib/macos_arm64" -name '_multiarray_umath*.so')"
+          codesign --verify --strict --verbose=2 "$so"
+          codesign -dv "$so" 2>&1 | grep -F 'Authority=Developer ID Application'
+          cd "$RUNNER_TEMP"
+          "$PY314" -I -c "
+          import sys
+          sys.path[:0] = ['$folder', '$folder/lib/macos_arm64']
+          import numpy as np
+          from mssengine import section_fit
+          print('numpy', np.__version__, 'loaded from', np.__file__)
+          assert np.__file__.startswith('$folder')
+          "
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/MeshToOutline-*-mac.zip dist/MeshToOutline-*-windows.zip \
+            --title "Mesh to Outline ${GITHUB_REF_NAME#v}" \
+            --notes "Download the zip for your computer. Install steps are in the [README](https://github.com/$GITHUB_REPOSITORY#install)."
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          name: zips
+          path: dist/MeshToOutline-*-*.zip
