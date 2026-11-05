@@ -51,7 +51,7 @@ def check_tree(top):
                 with open(p, encoding='utf-8', errors='replace') as fh:
                     text = fh.read()
                 # numpy's own files are not ours to judge
-                if os.sep + 'lib' + os.sep not in os.path.relpath(p, top):
+                if not os.path.relpath(p, top).startswith('lib' + os.sep):
                     for word in DEV_PATHS:
                         if word in text:
                             fail('{} in {}'.format(word, p))
