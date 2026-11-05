@@ -80,6 +80,9 @@ under its own licence: see `THIRD-PARTY-NOTICES.txt` in the zip.
 Bug fixes and feature improvements are welcome. Open an issue or send a pull
 request. [DEVELOPING.md](DEVELOPING.md) shows how to set up and run the tests.
 
+By sending a pull request, you agree that Chris Venter may also release your
+code under other licences, such as the Autodesk store's or a commercial licence.
+
 Part of [stlToSolid](https://stltosolid.com). Not affiliated with or endorsed by
 Autodesk. Autodesk and Autodesk Fusion are registered trademarks or trademarks of
 Autodesk, Inc., and/or its subsidiaries and/or affiliates.
