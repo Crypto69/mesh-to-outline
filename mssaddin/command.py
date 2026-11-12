@@ -858,9 +858,10 @@ class _Execute(adsk.core.CommandEventHandler):
                     sk.name = 'section {} {:+.2f} mm'.format(plane_name, off_cm * 10.0)
                 sk.isComputeDeferred = True
                 try:
-                    before = dict(drawn)
+                    keys = ('arcs_as_lines', 'splines_as_lines', 'skipped')
+                    before = {k: drawn.get(k, 0) for k in keys}
                     n = draw_section(sk, sec, drawn, tidy=tidy)
-                    if drawn != before:
+                    if any(drawn.get(k, 0) != before[k] for k in keys):
                         _log('{}: Fusion refused {} arc(s), {} spline(s): drawn as lines; {} '
                              'tiny curve(s) left out'.format(
                                  sk.name, drawn.get('arcs_as_lines', 0) - before.get('arcs_as_lines', 0),
@@ -926,7 +927,7 @@ class _Execute(adsk.core.CommandEventHandler):
             head += '\nTidy corners: {} tangent constraint{} added'.format(
                 drawn.get('tangent', 0), '' if drawn.get('tangent', 0) == 1 else 's')
             if drawn.get('tangent_failed'):
-                head += ', {} Fusion refused'.format(drawn['tangent_failed'])
+                head += ', {} could not be added'.format(drawn['tangent_failed'])
         if xray_note:
             head += '\n' + xray_note
         if cancelled:
