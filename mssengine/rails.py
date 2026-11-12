@@ -226,6 +226,37 @@ def _pieces(P, closed, h, lo, hi):
     return n_hat_h
 
 
+def _monotonic(pieces, n_hat, back):
+    """Split every piece where it turns back along the axis by more than
+    `back` mm: a cut of a shell runs out along the outer skin and back
+    along the inner one, and each way is a rail of its own (a rail crosses
+    each profile once). Smaller wiggles of a scanned surface stay in the run
+    (a profile crossed twice there is flagged, not split). The split is at
+    the turning point, which both runs keep."""
+    out = []
+    for q in pieces:
+        h = q @ n_hat
+        start, ext, d = 0, 0, 0        # run start, index of its extreme, direction (+1/-1, 0 unknown)
+        for i in range(1, len(h)):
+            if d == 0:
+                if abs(h[i] - h[start]) > back:
+                    d = 1 if h[i] > h[start] else -1
+                    ext = i
+                elif (h[i] - h[start]) * (h[ext] - h[start]) >= 0 and abs(h[i] - h[start]) >= abs(h[ext] - h[start]):
+                    ext = i
+                continue
+            if d * (h[i] - h[ext]) > 0:
+                ext = i
+            elif d * (h[ext] - h[i]) > back:
+                out.append(q[start:ext + 1])
+                start, d = ext, -d
+                # the new run's extreme so far
+                seg = h[start:i + 1]
+                ext = start + int(np.argmax(d * seg))
+        out.append(q[start:])
+    return [q for q in out if len(q) >= 2]
+
+
 def _crossings_at(h, target):
     """Positions (fractional index) where the polyline's axis coordinate
     `h` passes `target`. Vertices exactly on it (a run of them) count once."""
@@ -266,7 +297,9 @@ def trace_rails(V, F, axis_normal, centre, secs2d, tol=0.08, count=2):
     onto the profile curves and forced into its fit points (the raw points
     between them thinned at tol/2), its ends are the first and last
     profiles' crossings. Anything else comes back with complete False and
-    a note (drawn, but no loft should use it).
+    a note (drawn, but no loft should use it). A cut that turns back along
+    the axis (a shell's outer and inner skin) is split there into one rail
+    each way; pieces that do not reach two profile planes are dropped.
 
     Returns [{'plane': {'origin', 'normal'}, 'pts': [[x, y, z]...],
     'complete': bool, 'crossings': [[profile index, [x, y, z]]...],
@@ -281,6 +314,9 @@ def trace_rails(V, F, axis_normal, centre, secs2d, tol=0.08, count=2):
         raise ValueError('the sections are not in stack order')
     lo, hi = min(heights), max(heights)
     snap = 3.0 * tol + SNAP_EXTRA_MM
+    # a turn back along the axis bigger than this splits a cut into two rails
+    gaps = np.diff(sorted(heights))
+    back = max(10.0 * tol, 0.25 * float(gaps.min())) if len(gaps) else 10.0 * tol
     rails = []
     for ro, rm in rail_planes(n_hat, centre, count):
         prof_x = [rail_crossings(s, ro, rm) for s in secs2d]
@@ -292,12 +328,15 @@ def trace_rails(V, F, axis_normal, centre, secs2d, tol=0.08, count=2):
             Q = Q[keep]
             if len(Q) < 2:
                 continue
-            for piece in _pieces(Q, closed, Q @ n_hat, lo, hi):
+            for piece in _monotonic(_pieces(Q, closed, Q @ n_hat, lo, hi), n_hat, back):
                 h = piece @ n_hat
                 h[np.abs(h - lo) <= 1e-7] = lo         # the clipped ends sit on the end planes
                 h[np.abs(h - hi) <= 1e-7] = hi
                 if h[0] > h[-1]:
                     piece, h = piece[::-1], h[::-1]
+                # a piece between two neighbouring profile planes is no rail
+                if sum(1 for hk in heights if h.min() - _EPS <= hk <= h.max() + _EPS) < 2:
+                    continue
                 rails.append(_one_rail(piece, h, heights, prof_x, ro, rm, tol, snap))
     return rails
 
