@@ -132,13 +132,15 @@ def bracket():
     return m
 
 
-def _inputs(mesh, mode, start=None, end=None, spacing_mm=0.7, count=3, extrude=True, plane=True):
+def _inputs(mesh, mode, start=None, end=None, spacing_mm=0.7, count=3, extrude=True, plane=True,
+            tidy=False):
     xy = SimpleNamespace(name='XY', geometry=plane_geom((0, 0, 0), (0, 0, 1)))
     items = {
         'mesh_body': Sel(SimpleNamespace(entity=mesh)),
         'plane': Sel(*([SimpleNamespace(entity=xy)] if plane else [])),
         'tolerance': SimpleNamespace(value=0.008), 'join': SimpleNamespace(value=0.25),
         'trim': SimpleNamespace(value=0.0), 'outline': SimpleNamespace(value=True),
+        'tidy': SimpleNamespace(value=tidy), 'sharpen': SimpleNamespace(value=0.008, isVisible=tidy),
         'mode': SimpleNamespace(selectedItem=SimpleNamespace(index=mode)),
         'spacing': SimpleNamespace(value=spacing_mm / 10.0), 'count': SimpleNamespace(value=count),
         'direction': SimpleNamespace(selectedItem=SimpleNamespace(index=0)),
@@ -377,3 +379,47 @@ def test_xray_warns_when_a_slice_outline_stays_open(cmd, bracket, monkeypatch):
     msg = fus.messages[-1]
     assert msg.startswith('WARNING: the outline did not close in 1 slice (+2.00 mm)')
     assert 'Join gaps 6.5 mm would close it' in msg
+
+
+def test_tidy_inputs_in_the_dialog(cmd, monkeypatch):
+    """Tidy corners is a tick, off by default; Sharpen shows only with it."""
+    command, fus = cmd
+    monkeypatch.setattr(command, '_handlers', [])
+    inputs = _RecordingInputs()
+    command._CommandCreated().notify(SimpleNamespace(command=SimpleNamespace(
+        commandInputs=inputs, isRepeatable=True, inputChanged=MagicMock(), execute=MagicMock())))
+    assert not fus.messages
+    assert inputs.labels['tidy'] == 'Tidy corners' and inputs.labels['sharpen'] == 'Sharpen rounds below'
+    assert inputs.ids.index('tidy') == inputs.ids.index('outline') + 1
+    assert inputs.items['sharpen'].isVisible is False
+    m = SimpleNamespace(value=True)
+    sh = SimpleNamespace(isVisible=False)
+    items = {'tidy': m, 'sharpen': sh, 'mode': SimpleNamespace(selectedItem=SimpleNamespace(index=0))}
+    fake = SimpleNamespace(itemById=items.get)
+    command._InputChanged().notify(SimpleNamespace(input=SimpleNamespace(id='tidy'), inputs=fake))
+    assert sh.isVisible is True
+    m.value = False
+    command._InputChanged().notify(SimpleNamespace(input=SimpleNamespace(id='tidy'), inputs=fake))
+    assert sh.isVisible is False
+
+
+def test_single_slice_with_tidy_adds_tangents(cmd, bracket):
+    """A single slice of the bracket with Tidy corners: the curves share
+    their sketch points, the fillets get tangent constraints, and the
+    message says how many."""
+    command, fus = cmd
+    m = bracket
+    mesh = FakeMesh(m.vertices, m.faces)
+    plain = _inputs(mesh, command.MODE_ONE)
+    command._Execute()._run(SimpleNamespace(command=SimpleNamespace(commandInputs=plain)))
+    assert len(fus.sketches) == 1 and not fus.sketches[0].tangents
+    assert 'Tidy corners' not in fus.messages[-1]
+    fus.sketches.clear()
+    tidy = _inputs(mesh, command.MODE_ONE, tidy=True)
+    command._Execute()._run(SimpleNamespace(command=SimpleNamespace(commandInputs=tidy)))
+    sk = fus.sketches[0]
+    k = len(sk.tangents)
+    assert 'Tidy corners: {} tangent constraint'.format(k) in fus.messages[-1], fus.messages[-1]
+    # every curve after a loop's first starts on a sketch point made before
+    from desktop_tests.fake_adsk import SketchPoint
+    assert any(isinstance(c[1], SketchPoint) for c in sk.calls)

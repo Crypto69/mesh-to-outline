@@ -97,3 +97,54 @@ def test_refused_arc_is_drawn_as_two_lines_and_the_run_goes_on():
     assert sk.calls[1][1:] == ((1.0, 0.0, 0.0), (1.5, 0.00001, 0.0))
     assert sk.calls[2][1:] == ((1.5, 0.00001, 0.0), (2.0, 0.0, 0.0))
     assert notes == {'arcs_as_lines': 1, 'skipped': 1}
+
+
+def _noisy_rounded_rect(r=1.0, w=20, h=10, seed=1):
+    pts = []
+    for cx, cy, a0 in [(w - r, h - r, 0), (r, h - r, 90), (r, r, 180), (w - r, r, 270)]:
+        for k in range(10):
+            a = np.radians(a0 + 90 * k / 9)
+            pts.append((cx + r * np.cos(a), cy + r * np.sin(a)))
+    P = np.array(pts)
+    P = np.vstack([np.linspace(P[i], P[(i + 1) % len(P)], 12, endpoint=False) for i in range(len(P))])
+    return P + np.random.default_rng(seed).normal(0, 0.01, P.shape)
+
+
+def test_tidy_draw_chains_points_and_adds_tangents():
+    """draw_prims_tidy on a noisy rounded rect (both turning directions):
+    each curve starts on the previous one's end sketch point, the loop
+    closes on the first one's start, and every flagged junction gets one
+    tangent constraint."""
+    from mssaddin.command import draw_section
+    from mssengine import section_fit
+    for xy in (_noisy_rounded_rect(), _noisy_rounded_rect()[::-1]):
+        st = {}
+        prims = section_fit.fit_loop(xy, tol=0.08, tidy=True, stats=st)
+        frame = (np.zeros(3), np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), np.array([0, 0, 1.0]))
+        sec = {'loops': [(section_fit.lift_prims(prims, frame), [])], 'open': []}
+        sk, notes = RecordingSketch(), {}
+        assert draw_section(sk, sec, notes, tidy=True) == len(prims)
+        assert st['tangent'] == 8 and len(sk.tangents) == 8 and notes == {'tangent': 8}
+        lifted = sec['loops'][0][0]
+
+        def ends(c, p):
+            a, b = c.startSketchPoint, c.endSketchPoint
+            q0 = [v / 10.0 for v in p['p0']]
+            return (a, b) if a.geometry.distanceTo(q0) <= b.geometry.distanceTo(q0) else (b, a)
+        path = [ends(c, p) for c, p in zip(sk.curves, lifted)]
+        for (_, e0), (s1, _) in zip(path, path[1:]):
+            assert e0 is s1
+        assert path[-1][1] is path[0][0]
+
+
+def test_tidy_off_draws_exactly_as_before():
+    from mssaddin.command import draw_section
+    from mssengine import section_fit
+    prims = section_fit.fit_loop(_noisy_rounded_rect(), tol=0.08)
+    frame = (np.zeros(3), np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), np.array([0, 0, 1.0]))
+    sec = {'loops': [(section_fit.lift_prims(prims, frame), [])], 'open': []}
+    a, b = RecordingSketch(), RecordingSketch()
+    draw_section(a, sec)
+    draw_section(b, sec, tidy=False)
+    assert a.calls == b.calls and not a.tangents
+    assert all(not hasattr(x, 'geometry') for c in a.calls for x in c[1:] if not isinstance(x, list))

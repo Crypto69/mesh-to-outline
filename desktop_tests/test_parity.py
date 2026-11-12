@@ -69,3 +69,28 @@ def test_engine_copies_are_current():
     r = subprocess.run([sys.executable, os.path.join(ADDIN, 'tools', 'sync_engine.py'), '--check'],
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_tidy_parity():
+    """Tidy corners + sharpen give exactly what stlToSolid gives."""
+    from mssengine import section_fit as port
+    ref = pytest.importorskip('stl_to_solid.section_fit')
+    for name, V, F, origin, join in _cases():
+        a = port.section_preview(V, F, origin, [0, 0, 1], tol=0.08, join_mm=join, tidy=True, sharpen_mm=0.08)
+        b = ref.section_preview(V, F, origin, [0, 0, 1], tol=0.08, join_mm=join, tidy=True, sharpen_mm=0.08)
+        _same_section(a, b)
+    m = trimesh.load(conftest.sample('fixed-rc-n2-360.stl'), force='mesh')
+    m.apply_scale(0.1)
+    o = [0, 0, m.bounding_box.centroid[2] - 26.0]
+    a = port.section_preview(m.vertices, m.faces, o, [0, 0, 1], tol=0.08, tidy=True, sharpen_mm=0.08)
+    b = ref.section_preview(m.vertices, m.faces, o, [0, 0, 1], tol=0.08, tidy=True, sharpen_mm=0.08)
+    _same_section(a, b)
+    assert a['loops'] == b['loops']
+
+
+def test_draw_prims_tidy_is_the_web_scripts_copy():
+    """The add-in's draw_prims_tidy / _nearest_end are the exact text of
+    stl_to_solid.fusion_export._DRAW_TIDY (the X-Ray script's copy)."""
+    fe = pytest.importorskip('stl_to_solid.fusion_export')
+    src = open(os.path.join(ADDIN, 'mssaddin', 'command.py')).read()
+    assert fe._DRAW_TIDY.strip('\n') in src

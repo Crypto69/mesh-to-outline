@@ -178,6 +178,13 @@ def stats_line(st, outline=False):
         tail += '; {} sliver{} trimmed'.format(st['trimmed'], '' if st['trimmed'] == 1 else 's')
     if st.get('specks'):
         tail += '; {} speck{} on the outline dropped'.format(st['specks'], '' if st['specks'] == 1 else 's')
+    if st.get('tangent') or st.get('sharpened'):
+        t = []
+        if st.get('tangent'):
+            t.append('{} tangent'.format(st['tangent']))
+        if st.get('sharpened'):
+            t.append('{} sharpened'.format(st['sharpened']))
+        tail += '; ' + ', '.join(t)
     if st.get('bridged'):
         tail += '; outline closed across {} mesh gap{} (largest {:.2f} mm)'.format(
             st['bridged'], '' if st['bridged'] == 1 else 's', st.get('bridge_max', 0.0))
@@ -249,16 +256,107 @@ def draw_prims(sketch, prims, notes=None):
     return n
 
 
-def draw_section(sketch, sec, notes=None):
+# (draw_prims_tidy and _nearest_end are copied verbatim from
+# stl_to_solid.fusion_export._DRAW_TIDY; desktop_tests/test_parity checks)
+def _nearest_end(curve, target):
+    """The end sketch point of `curve` nearest `target` (sketch space).
+    Fusion keeps an arc counter-clockwise, so a clockwise arc's
+    startSketchPoint is where it was asked to end."""
+    a, b = curve.startSketchPoint, curve.endSketchPoint
+    return a if a.geometry.distanceTo(target) <= b.geometry.distanceTo(target) else b
+
+
+def draw_prims_tidy(sketch, prims, notes=None):
+    """Tidy-corners twin of draw_prims: the curves of one loop or open
+    chain are chained through shared sketch points (each curve starts on
+    the previous curve's end point, a loop's last curve ends on the first
+    curve's start point), so Fusion sees them connected, and every
+    junction the section data marks tangent ('tan1' on a curve, 'tan0' on
+    the next) gets a tangent constraint. A curve Fusion refuses on shared
+    points is drawn from plain points instead, with draw_prims's
+    fallbacks. `notes` also counts 'tangent' (constraints added) and
+    'tangent_failed'. Returns the curve count."""
+    notes = {} if notes is None else notes
+    if isinstance(prims, dict) or len(prims) < 2:
+        return draw_prims(sketch, prims, notes)
+    curves = sketch.sketchCurves
+
+    def P(p):
+        return sketch.modelToSketchSpace(
+            adsk.core.Point3D.create(p[0] / 10.0, p[1] / 10.0, p[2] / 10.0))
+
+    def ends(p):
+        if p['type'] == 'spline':
+            return p['pts'][0], p['pts'][-1]
+        return p['p0'], p['p1']
+
+    def bump(key):
+        notes[key] = notes.get(key, 0) + 1
+
+    a0, z1 = ends(prims[0])[0], ends(prims[-1])[1]
+    closed = sum((x - y) ** 2 for x, y in zip(a0, z1)) < 1e-12
+    first, prev_end, made, n = None, None, [], 0
+    for k, p in enumerate(prims):
+        q0, q1 = ends(p)
+        start = prev_end if prev_end is not None else P(q0)
+        end = first if (closed and k == len(prims) - 1 and first is not None) else P(q1)
+        curve, ok = None, True
+        try:
+            if p['type'] == 'line':
+                curve = curves.sketchLines.addByTwoPoints(start, end)
+            elif p['type'] == 'arc':
+                curve = curves.sketchArcs.addByThreePoints(start, P(p['mid']), end)
+            else:
+                pc = adsk.core.ObjectCollection.create()
+                pc.add(start)
+                for q in p['pts'][1:-1]:
+                    pc.add(P(q))
+                pc.add(end)
+                curve = curves.sketchFittedSplines.add(pc)
+        except Exception:
+            ok = False
+        if not ok:
+            n += draw_prims(sketch, [p], notes)
+        else:
+            n += 1
+        if curve is None:
+            prev_end = None
+            made.append((p, None))
+            continue
+        if k == 0:
+            first = _nearest_end(curve, P(q0))
+        prev_end = _nearest_end(curve, P(q1))
+        made.append((p, curve))
+    gc = sketch.geometricConstraints
+    pairs = list(zip(made, made[1:]))
+    if closed:
+        pairs.append((made[-1], made[0]))
+    for (pa, ca), (pb, cb) in pairs:
+        if not (pa.get('tan1') and pb.get('tan0')):
+            continue
+        if ca is None or cb is None:
+            bump('tangent_failed')
+            continue
+        try:
+            gc.addTangent(ca, cb)
+            bump('tangent')
+        except Exception:
+            bump('tangent_failed')
+    return n
+
+
+def draw_section(sketch, sec, notes=None, tidy=False):
     """All loops (outer + holes) and open chains of a section_preview
-    result. Returns the curve count."""
+    result; with `tidy` through shared sketch points with tangent
+    constraints (draw_prims_tidy). Returns the curve count."""
+    draw = draw_prims_tidy if tidy else draw_prims
     n = 0
     for outer, holes in sec['loops']:
-        n += draw_prims(sketch, outer, notes)
+        n += draw(sketch, outer, notes)
         for h in holes:
-            n += draw_prims(sketch, h, notes)
+            n += draw(sketch, h, notes)
     for chain in sec.get('open', []):
-        n += draw_prims(sketch, chain, notes)
+        n += draw(sketch, chain, notes)
     return n
 
 
@@ -545,6 +643,14 @@ class _CommandCreated(adsk.core.CommandCreatedEventHandler):
             inputs.addValueInput('trim', 'Trim slivers up to', 'mm',
                                  adsk.core.ValueInput.createByReal(0.0))
             inputs.addBoolValueInput('outline', 'Outline only', True, '', False)
+            td = inputs.addBoolValueInput('tidy', 'Tidy corners', True, '', False)
+            td.tooltip = ('Fillets meet their walls tangent and corners meet exactly; the curves '
+                          'share their end points and the fillets get tangent constraints')
+            sh = inputs.addValueInput('sharpen', 'Sharpen rounds below', 'mm',
+                                      adsk.core.ValueInput.createByReal(0.008))
+            sh.tooltip = ('A round between two walls that stays within this of their corner is '
+                          'drawn as the sharp corner (0 keeps every round)')
+            sh.isVisible = False
             ex = inputs.addBoolValueInput('extrude', 'Extrude each slice', True, '', False)
             ex.isVisible = False
             # the mesh picked last time may be gone or changed
@@ -580,6 +686,9 @@ class _InputChanged(adsk.core.InputChangedEventHandler):
                     if k not in show:
                         pick.clearSelection()
                     pick.setSelectionLimits(1 if k in show else 0, 1)
+            if iid == 'tidy':
+                td = adsk.core.BoolValueCommandInput.cast(inputs.itemById('tidy'))
+                inputs.itemById('sharpen').isVisible = bool(td.value)
             if mode == MODE_XRAY and iid in ('mode', 'mesh_body', 'xray_start',
                                              'xray_end', 'spacing'):
                 _xray_info(inputs)
@@ -619,6 +728,9 @@ class _Execute(adsk.core.CommandEventHandler):
         join_mm = adsk.core.ValueCommandInput.cast(inputs.itemById('join')).value * 10.0
         trim_mm = adsk.core.ValueCommandInput.cast(inputs.itemById('trim')).value * 10.0
         outline = adsk.core.BoolValueCommandInput.cast(inputs.itemById('outline')).value
+        tidy = bool(adsk.core.BoolValueCommandInput.cast(inputs.itemById('tidy')).value)
+        sharpen_mm = adsk.core.ValueCommandInput.cast(inputs.itemById('sharpen')).value * 10.0
+        sharpen_mm = min(max(sharpen_mm, 0.0), 1.0) if tidy else 0.0
         spacing_cm = adsk.core.ValueCommandInput.cast(inputs.itemById('spacing')).value
         count = adsk.core.IntegerSpinnerCommandInput.cast(inputs.itemById('count')).value
         dd = adsk.core.DropDownCommandInput.cast(inputs.itemById('direction'))
@@ -725,7 +837,8 @@ class _Execute(adsk.core.CommandEventHandler):
                         break
                 origin_mm = (origin_cm + normal * off_cm) * 10.0
                 sec = section_fit.section_preview(V, F, origin_mm, normal, tol=tol_mm, join_mm=join_mm,
-                                                  closed_only=outline, trim_mm=trim_mm)
+                                                  closed_only=outline, trim_mm=trim_mm, tidy=tidy,
+                                                  sharpen_mm=sharpen_mm)
                 slice_stats.append(('{:+.2f} mm'.format(off_cm * 10.0), sec['stats']))
                 if not sec['loops'] and not sec['open']:
                     empty += 1
@@ -746,7 +859,7 @@ class _Execute(adsk.core.CommandEventHandler):
                 sk.isComputeDeferred = True
                 try:
                     before = dict(drawn)
-                    n = draw_section(sk, sec, drawn)
+                    n = draw_section(sk, sec, drawn, tidy=tidy)
                     if drawn != before:
                         _log('{}: Fusion refused {} arc(s), {} spline(s): drawn as lines; {} '
                              'tiny curve(s) left out'.format(
@@ -809,6 +922,11 @@ class _Execute(adsk.core.CommandEventHandler):
                     'through the same points'.format(fixed, '' if fixed == 1 else 's', '' if fixed == 1 else 's')
         if drawn.get('skipped'):
             head += '\n{} tiny curve{} Fusion refused left out'.format(drawn['skipped'], '' if drawn['skipped'] == 1 else 's')
+        if tidy:
+            head += '\nTidy corners: {} tangent constraint{} added'.format(
+                drawn.get('tangent', 0), '' if drawn.get('tangent', 0) == 1 else 's')
+            if drawn.get('tangent_failed'):
+                head += ', {} Fusion refused'.format(drawn['tangent_failed'])
         if xray_note:
             head += '\n' + xray_note
         if cancelled:
