@@ -991,8 +991,9 @@ class _Execute(adsk.core.CommandEventHandler):
                 if not cancelled:
                     from mssengine import rails as rails_mod
                     centre_mm = (V.min(axis=0) + V.max(axis=0)) / 2.0
-                    rail_list = rails_mod.trace_rails(V, F, normal, centre_mm,
-                                                      [s for s in pre if s['loops']], tol=tol_mm)
+                    rail_list = rails_mod.trace_rails(
+                        V, F, normal, centre_mm, [s for s in pre if s['loops']], tol=tol_mm,
+                        labels=['{}/{}'.format(i + 1, count) for i, s in enumerate(pre) if s['loops']])
             for i, off_cm in enumerate(offs_cm):
                 if cancelled:
                     break
