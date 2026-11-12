@@ -39,10 +39,13 @@ MAX_STACK = 400
 MODE_ONE, MODE_STACK, MODE_XRAY = 0, 1, 2
 MODE_INPUTS = {
     MODE_ONE: ('plane',),
-    MODE_STACK: ('plane', 'spacing', 'count', 'direction', 'extrude'),
-    MODE_XRAY: ('xray_start', 'xray_end', 'spacing', 'extrude', 'xray_info'),
+    MODE_STACK: ('plane', 'spacing', 'count', 'direction', 'extrude', 'rails'),
+    MODE_XRAY: ('xray_start', 'xray_end', 'spacing', 'extrude', 'rails', 'xray_info'),
 }
-ALL_MODE_INPUTS = ('plane', 'xray_start', 'xray_end', 'spacing', 'count', 'direction', 'extrude', 'xray_info')
+ALL_MODE_INPUTS = ('plane', 'xray_start', 'xray_end', 'spacing', 'count', 'direction', 'extrude', 'rails',
+                   'xray_info')
+# a Fusion loft through hundreds of profiles is impractical
+LOFT_MAX = 60
 MODE_PICKS = ('plane', 'xray_start', 'xray_end')
 
 # icons: Fusion only shows a command as a panel button when it has them
@@ -456,6 +459,130 @@ def _extrude_slice(root, sketch, dist_cm, bodies, seen, areas_cm2=None):
     return made, matched
 
 
+def _rail_plane(root, base, centre_mm, m, np):
+    """A construction plane through `centre_mm` with normal `m`, square to
+    the picked plane `base` (the stack runs along base's normal, which the
+    rail plane contains): a construction line in a sketch on `base`, then a
+    plane at 90 degrees to `base` about that line. Built from geometry, so it
+    works in parametric designs as well as direct ones."""
+    g = adsk.core.Plane.cast(base.geometry)
+    nb = np.array([g.normal.x, g.normal.y, g.normal.z], float)
+    nb /= np.linalg.norm(nb)
+    ob = np.array([g.origin.x, g.origin.y, g.origin.z], float) * 10.0
+    c = centre_mm - ((centre_mm - ob) @ nb) * nb             # the centre on the base plane
+    d = np.cross(nb, m)
+    d /= np.linalg.norm(d)
+    sk = root.sketches.add(base)
+    sk.name = 'rail axis'
+
+    def P(q):
+        return sk.modelToSketchSpace(adsk.core.Point3D.create(q[0] / 10.0, q[1] / 10.0, q[2] / 10.0))
+    ln = sk.sketchCurves.sketchLines.addByTwoPoints(P(c - 10.0 * d), P(c + 10.0 * d))
+    ln.isConstruction = True
+    inp = root.constructionPlanes.createInput()
+    inp.setByAngle(ln, adsk.core.ValueInput.createByString('90 deg'), base)
+    return root.constructionPlanes.add(inp)
+
+
+def draw_rails(root, base, rails, notes, np):
+    """One construction plane + sketch per rail plane, one fitted spline
+    per rail. Returns [(rail, curve)] for the rails drawn."""
+    sketches, out = {}, []
+    for k, r in enumerate(rails):
+        key = tuple(round(c, 6) for c in r['plane']['normal'])
+        name = 'rail {}/{}'.format(k + 1, len(rails))
+        if key not in sketches:
+            try:
+                pl = _rail_plane(root, base, np.asarray(r['plane']['origin'], float),
+                                 np.asarray(r['plane']['normal'], float), np)
+                pl.name = 'rail plane {}'.format(len(sketches) + 1)
+                sk = root.sketches.add(pl)
+                sk.name = 'rails {}'.format(len(sketches) + 1)
+            except Exception:
+                why = traceback.format_exc().strip().splitlines()[-1]
+                notes.append('the rail plane could not be made ({}); its rails are left out'.format(why))
+                sk = None
+            sketches[key] = sk
+        sk = sketches[key]
+        if sk is None:
+            continue
+        pc = adsk.core.ObjectCollection.create()
+        for q in r['pts']:
+            pc.add(sk.modelToSketchSpace(adsk.core.Point3D.create(q[0] / 10.0, q[1] / 10.0, q[2] / 10.0)))
+        try:
+            out.append((r, sk.sketchCurves.sketchFittedSplines.add(pc)))
+        except Exception:
+            notes.append('{}: Fusion refused the rail'.format(name))
+    return out
+
+
+# (_loft_with_rails is copied verbatim from the stlToSolid X-Ray script's
+# runtime, fusion_export._XRAY_RAILS_RUNTIME; desktop_tests/test_parity checks)
+def _loft_with_rails(root, drawn, rail_curves):
+    """Loft one new body through the largest material profile of each
+    section sketch, guided by `rail_curves`. Without the rails if Fusion
+    refuses them. Returns how ('with N rails' / 'without rails (why)');
+    raises when Fusion refuses the loft both ways."""
+    profs = []
+    for sk, sec in drawn:
+        areas = [a / 100.0 for a in (sec.get('areas_mm2') or [])]
+        cand, _ = _material_profiles(sk, areas)
+        if not cand:
+            raise RuntimeError('%s has no closed profile' % sk.name)
+        profs.append(max(cand, key=lambda p: p.areaProperties().area))
+    lofts = root.features.loftFeatures
+
+    def attempt(rails):
+        li = lofts.createInput(adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+        for p in profs:
+            li.loftSections.add(p)
+        for c in rails:
+            li.centerLineOrRails.addRail(c)
+        li.isSolid = True
+        return lofts.add(li)
+
+    why = None
+    if rail_curves:
+        try:
+            attempt(rail_curves)
+            return 'with %d rail(s)' % len(rail_curves)
+        except Exception:
+            why = traceback.format_exc().strip().splitlines()[-1]
+    attempt([])
+    return 'without rails (%s)' % why if why else 'without rails'
+
+
+def _rails_and_loft(root, base, normal, rails, drawn, loft, np):
+    """After the slices: draw the rails, then (loft) the loft. Returns the
+    lines for the closing message."""
+    notes = []
+    curves = draw_rails(root, base, rails, notes, np)
+    done = [c for r, c in curves if r['complete']]
+    part = [k for k, r in enumerate(rails) if not r['complete']]
+    line = 'Rails: {} drawn, {} touching every slice'.format(len(curves), len(done))
+    if part:
+        line += '; not used by a loft: ' + '; '.join(
+            'rail {}/{} ({})'.format(k + 1, len(rails), rails[k]['note']) for k in part[:3]) + \
+            (' ...' if len(part) > 3 else '')
+    notes.insert(0, line)
+    if not loft:
+        return notes
+    if len(drawn) < 2:
+        notes.append('Loft skipped: it needs at least two sketches')
+    elif len(drawn) > LOFT_MAX:
+        notes.append('Loft skipped: {} slices is more than {}; use a bigger spacing for the loft'.format(
+            len(drawn), LOFT_MAX))
+    elif any(not sec['loops'] for sk, sec in drawn):
+        notes.append('Loft skipped: a slice has no closed outline')
+    else:
+        try:
+            notes.insert(0, 'Loft: one new body ' + _loft_with_rails(root, drawn, done))
+        except Exception:
+            why = traceback.format_exc().strip().splitlines()[-1]
+            notes.insert(0, 'WARNING: Fusion refused the loft ({}); the sketches and rails are kept'.format(why))
+    return notes
+
+
 def mesh_arrays(mesh_body, np):
     """(vertices mm, faces) of a MeshBody in root-component space."""
     # displayMesh is a TriangleMesh (nodeIndices); mesh is a PolygonMesh in
@@ -653,6 +780,14 @@ class _CommandCreated(adsk.core.CommandCreatedEventHandler):
             sh.isVisible = False
             ex = inputs.addBoolValueInput('extrude', 'Extrude each slice', True, '', False)
             ex.isVisible = False
+            rl = inputs.addBoolValueInput('rails', 'Add 2 rails (90\u00b0 sections)', True, '', False)
+            rl.tooltip = ('Two cuts along the stack through the mesh centre, drawn as splines that '
+                          'touch every slice\'s outline exactly (what a Loft needs)')
+            rl.isVisible = False
+            lf = inputs.addBoolValueInput('loft', 'Loft profiles + rails (new body)', True, '', False)
+            lf.tooltip = ('After the sketches, loft one new body through the slices along the rails '
+                          '(best effort; instead of Extrude each slice)')
+            lf.isVisible = False
             # the mesh picked last time may be gone or changed
             _mesh_cache.clear()
             inputs.addBoolValueInput('hide_mesh', 'Hide mesh after', True, '', False)
@@ -686,6 +821,9 @@ class _InputChanged(adsk.core.InputChangedEventHandler):
                     if k not in show:
                         pick.clearSelection()
                     pick.setSelectionLimits(1 if k in show else 0, 1)
+            if iid in ('mode', 'rails'):
+                rl = adsk.core.BoolValueCommandInput.cast(inputs.itemById('rails'))
+                inputs.itemById('loft').isVisible = mode != MODE_ONE and bool(rl.value)
             if iid == 'tidy':
                 td = adsk.core.BoolValueCommandInput.cast(inputs.itemById('tidy'))
                 inputs.itemById('sharpen').isVisible = bool(td.value)
@@ -737,6 +875,8 @@ class _Execute(adsk.core.CommandEventHandler):
         direction = dd.selectedItem.index if dd is not None and dd.selectedItem else 0
         hide_mesh = adsk.core.BoolValueCommandInput.cast(inputs.itemById('hide_mesh')).value
         extrude = adsk.core.BoolValueCommandInput.cast(inputs.itemById('extrude')).value
+        want_rails = bool(adsk.core.BoolValueCommandInput.cast(inputs.itemById('rails')).value)
+        want_loft = bool(adsk.core.BoolValueCommandInput.cast(inputs.itemById('loft')).value)
         if tol_mm <= 0:
             _msg('The fit tolerance must be positive.')
             return
@@ -778,6 +918,10 @@ class _Execute(adsk.core.CommandEventHandler):
             offs_cm = [k * spacing_cm for k in steps]
             ext_sign = -1.0 if direction == 1 else 1.0
             exts_cm = [ext_sign * spacing_cm] * count
+        rails = want_rails and mode != MODE_ONE and count > 1
+        loft = rails and want_loft
+        if loft:
+            extrude = False                  # one or the other
         if not extrude:
             exts_cm = [None] * count
 
@@ -826,8 +970,32 @@ class _Execute(adsk.core.CommandEventHandler):
         drawn = {}                       # curves Fusion refused, redrawn as lines
         failed = []                      # sketches whose slab could not be extruded
         slice_stats = []                 # (offset label, stats) per cut, for the open-outline warning
+        pre, rail_list, drawn_secs, rail_notes = None, [], [], []
         try:
+            if rails:
+                # every slice first, then the rails (they add their crossings
+                # to the slices' spline fit points), then the drawing
+                pre = []
+                for i, off_cm in enumerate(offs_cm):
+                    if pd is not None:
+                        pd.message = 'Tracing {} of {}'.format(i + 1, count)
+                        pd.progressValue = i
+                        adsk.doEvents()
+                        if pd.wasCancelled:
+                            cancelled = True
+                            break
+                    origin_mm = (origin_cm + normal * off_cm) * 10.0
+                    pre.append(section_fit.section_preview_2d(
+                        V, F, origin_mm, normal, tol=tol_mm, join_mm=join_mm, closed_only=outline,
+                        trim_mm=trim_mm, tidy=tidy, sharpen_mm=sharpen_mm))
+                if not cancelled:
+                    from mssengine import rails as rails_mod
+                    centre_mm = (V.min(axis=0) + V.max(axis=0)) / 2.0
+                    rail_list = rails_mod.trace_rails(V, F, normal, centre_mm,
+                                                      [s for s in pre if s['loops']], tol=tol_mm)
             for i, off_cm in enumerate(offs_cm):
+                if cancelled:
+                    break
                 if pd is not None:
                     pd.message = 'Section {} of {}'.format(i + 1, count)
                     pd.progressValue = i
@@ -836,9 +1004,12 @@ class _Execute(adsk.core.CommandEventHandler):
                         cancelled = True
                         break
                 origin_mm = (origin_cm + normal * off_cm) * 10.0
-                sec = section_fit.section_preview(V, F, origin_mm, normal, tol=tol_mm, join_mm=join_mm,
-                                                  closed_only=outline, trim_mm=trim_mm, tidy=tidy,
-                                                  sharpen_mm=sharpen_mm)
+                if pre is not None:
+                    sec = section_fit.lift_section(pre[i])
+                else:
+                    sec = section_fit.section_preview(V, F, origin_mm, normal, tol=tol_mm, join_mm=join_mm,
+                                                      closed_only=outline, trim_mm=trim_mm, tidy=tidy,
+                                                      sharpen_mm=sharpen_mm)
                 slice_stats.append(('{:+.2f} mm'.format(off_cm * 10.0), sec['stats']))
                 if not sec['loops'] and not sec['open']:
                     empty += 1
@@ -869,6 +1040,7 @@ class _Execute(adsk.core.CommandEventHandler):
                 finally:
                     sk.isComputeDeferred = False
                 made += 1
+                drawn_secs.append((sk, sec))
                 if exts_cm[i] is not None:
                     try:
                         areas = [a / 100.0 for a in sec.get('areas_mm2', [])]
@@ -891,6 +1063,8 @@ class _Execute(adsk.core.CommandEventHandler):
                     pd.hide()
                 except Exception:
                     pass
+        if rails and not cancelled:
+            rail_notes = _rails_and_loft(root, plane_ent, normal, rail_list, drawn_secs, loft, np)
         if made and hide_mesh:
             try:
                 mesh_body.isLightBulbOn = False
@@ -927,6 +1101,11 @@ class _Execute(adsk.core.CommandEventHandler):
                 drawn.get('tangent', 0), '' if drawn.get('tangent', 0) == 1 else 's')
             if drawn.get('tangent_failed'):
                 head += ', {} Fusion refused'.format(drawn['tangent_failed'])
+        for note in rail_notes:
+            if note.startswith('WARNING'):
+                head = note + '\n\n' + head
+            else:
+                head += '\n' + note
         if xray_note:
             head += '\n' + xray_note
         if cancelled:

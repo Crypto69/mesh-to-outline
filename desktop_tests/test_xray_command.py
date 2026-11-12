@@ -43,13 +43,20 @@ class Fusion:
     """Root component + UI that record what the command builds."""
     def __init__(self):
         self.planes, self.sketches, self.extrudes, self.messages = [], [], [], []
+        self.rail_planes, self.lofts = [], []
         fus = self
 
         class CPlanes:
             def createInput(self):
-                return SimpleNamespace(setByOffset=lambda pl, v: setattr(self, '_off', (pl, v[1])))
+                inp = SimpleNamespace(setByOffset=lambda pl, v: setattr(self, '_off', (pl, v[1])))
+                inp.setByAngle = lambda line, ang, base: setattr(inp, 'angle', (line, ang, base))
+                return inp
 
             def add(self, inp):
+                if hasattr(inp, 'angle'):
+                    new = SimpleNamespace(name='', by_angle=inp.angle)
+                    fus.rail_planes.append(new)
+                    return new
                 pl, off = self._off
                 g = pl.geometry
                 n = np.array([g.normal.x, g.normal.y, g.normal.z])
@@ -76,8 +83,19 @@ class Fusion:
                 fus.extrudes.append(inp.dist)
                 return SimpleNamespace(bodies=Coll([Body()]))
 
+        class Lofts:
+            def createInput(self, op):
+                li = SimpleNamespace(op=op, loftSections=Coll(), isSolid=False, rails=[])
+                li.centerLineOrRails = SimpleNamespace(addRail=li.rails.append)
+                return li
+
+            def add(self, li):
+                fus.lofts.append(li)
+                return li
+
         self.root = SimpleNamespace(constructionPlanes=CPlanes(), sketches=Sketches(),
-                                    features=SimpleNamespace(extrudeFeatures=Extrudes()))
+                                    features=SimpleNamespace(extrudeFeatures=Extrudes(),
+                                                             loftFeatures=Lofts()))
         self.app = SimpleNamespace(activeProduct=SimpleNamespace(rootComponent=self.root),
                                    log=lambda t: None)
         self.ui = SimpleNamespace(messageBox=lambda t, title=None: fus.messages.append(t),
@@ -133,7 +151,7 @@ def bracket():
 
 
 def _inputs(mesh, mode, start=None, end=None, spacing_mm=0.7, count=3, extrude=True, plane=True,
-            tidy=False):
+            tidy=False, rails=False, loft=False):
     xy = SimpleNamespace(name='XY', geometry=plane_geom((0, 0, 0), (0, 0, 1)))
     items = {
         'mesh_body': Sel(SimpleNamespace(entity=mesh)),
@@ -141,6 +159,7 @@ def _inputs(mesh, mode, start=None, end=None, spacing_mm=0.7, count=3, extrude=T
         'tolerance': SimpleNamespace(value=0.008), 'join': SimpleNamespace(value=0.25),
         'trim': SimpleNamespace(value=0.0), 'outline': SimpleNamespace(value=True),
         'tidy': SimpleNamespace(value=tidy), 'sharpen': SimpleNamespace(value=0.008, isVisible=tidy),
+        'rails': SimpleNamespace(value=rails, isVisible=False), 'loft': SimpleNamespace(value=loft, isVisible=False),
         'mode': SimpleNamespace(selectedItem=SimpleNamespace(index=mode)),
         'spacing': SimpleNamespace(value=spacing_mm / 10.0), 'count': SimpleNamespace(value=count),
         'direction': SimpleNamespace(selectedItem=SimpleNamespace(index=0)),
@@ -423,3 +442,40 @@ def test_single_slice_with_tidy_adds_tangents(cmd, bracket):
     # every curve after a loop's first starts on a sketch point made before
     from desktop_tests.fake_adsk import SketchPoint
     assert any(isinstance(c[1], SketchPoint) for c in sk.calls)
+
+
+def test_stack_with_rails_and_loft(cmd, bracket):
+    """A stack of 4 along Z on the bracket with rails + loft: every slice
+    is traced first, the rails get one angle plane + sketch per rail plane
+    (built from a line on the picked plane), and one loft runs through the
+    four sketches along the complete rails, instead of the extrusions."""
+    command, fus = cmd
+    m = bracket
+    mesh = FakeMesh(m.vertices, m.faces)
+    inputs = _inputs(mesh, command.MODE_STACK, count=4, spacing_mm=2.0, rails=True, loft=True)
+    command._Execute()._run(SimpleNamespace(command=SimpleNamespace(commandInputs=inputs)))
+    msg = fus.messages[-1]
+    assert 'Rails:' in msg, msg
+    names = [sk.name for sk in fus.sketches]
+    assert names.count('rail axis') == 2 and 'rails 1' in names and 'rails 2' in names
+    assert len(fus.rail_planes) == 2 and all(p.by_angle[1] == ('string', '90 deg') for p in fus.rail_planes)
+    rail_sk = [sk for sk in fus.sketches if sk.name.startswith('rails ')]
+    n_rails = sum(sk.kinds().count('spline') for sk in rail_sk)
+    assert n_rails >= 2
+    assert not fus.extrudes and len(fus.lofts) == 1
+    li = fus.lofts[0]
+    assert li.isSolid and len(li.loftSections) == 4
+    assert 'Loft: one new body' in msg
+
+
+def test_rails_tick_shows_loft(cmd):
+    command, _ = cmd
+    rails = SimpleNamespace(value=True)
+    loft = SimpleNamespace(isVisible=False)
+    items = {'rails': rails, 'loft': loft, 'mode': SimpleNamespace(selectedItem=SimpleNamespace(index=command.MODE_XRAY))}
+    fake = SimpleNamespace(itemById=items.get)
+    command._InputChanged().notify(SimpleNamespace(input=SimpleNamespace(id='rails'), inputs=fake))
+    assert loft.isVisible is True
+    items['mode'].selectedItem.index = command.MODE_ONE
+    command._InputChanged().notify(SimpleNamespace(input=SimpleNamespace(id='rails'), inputs=fake))
+    assert loft.isVisible is False

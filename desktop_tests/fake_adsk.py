@@ -27,7 +27,8 @@ def _build():
     fusion = types.ModuleType('adsk.fusion')
     core.Point3D = SimpleNamespace(create=staticmethod(_xyz))
     core.Vector3D = SimpleNamespace(create=staticmethod(_xyz))
-    core.ValueInput = SimpleNamespace(createByReal=staticmethod(lambda v: ('real', v)))
+    core.ValueInput = SimpleNamespace(createByReal=staticmethod(lambda v: ('real', v)),
+                                      createByString=staticmethod(lambda v: ('string', v)))
     core.ObjectCollection = SimpleNamespace(create=staticmethod(Coll))
     for name in ('CommandCreatedEventHandler', 'CommandEventHandler', 'InputChangedEventHandler'):
         setattr(core, name, type(name, (object,), {}))

@@ -10,6 +10,8 @@ splines, not thousands of tiny segments.
 - **Stack:** several sketches at a spacing you choose.
 - **X-Ray:** a stack of sketches between a start and an end.
 - **Extrude each slice:** turn a stack into one solid body.
+- **Rails + loft:** two 90° sections that touch every slice, and a lofted body
+  through the slices along them.
 - **Tidy corners:** fillets come out tangent (with tangent constraints) and tiny
   rounds come out as sharp corners, ready to model against.
 
