@@ -66,6 +66,54 @@ def test_rc_n2_parity():
 
 @pytest.mark.skipif(not conftest.HAVE_REPO, reason='needs the stlToSolid checkout')
 def test_engine_copies_are_current():
-    r = subprocess.run([sys.executable, os.path.join(ADDIN, 'tools', 'sync_engine.py'), '--check'],
+    r = subprocess.run([sys.executable, os.path.join(ADDIN, 'tools', 'sync_engine.py'), '--check',
+                        '--repo', conftest.REPO],
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_tidy_parity():
+    """Tidy corners + sharpen give exactly what stlToSolid gives."""
+    from mssengine import section_fit as port
+    ref = pytest.importorskip('stl_to_solid.section_fit')
+    for name, V, F, origin, join in _cases():
+        a = port.section_preview(V, F, origin, [0, 0, 1], tol=0.08, join_mm=join, tidy=True, sharpen_mm=0.08)
+        b = ref.section_preview(V, F, origin, [0, 0, 1], tol=0.08, join_mm=join, tidy=True, sharpen_mm=0.08)
+        _same_section(a, b)
+    m = trimesh.load(conftest.sample('fixed-rc-n2-360.stl'), force='mesh')
+    m.apply_scale(0.1)
+    o = [0, 0, m.bounding_box.centroid[2] - 26.0]
+    a = port.section_preview(m.vertices, m.faces, o, [0, 0, 1], tol=0.08, tidy=True, sharpen_mm=0.08)
+    b = ref.section_preview(m.vertices, m.faces, o, [0, 0, 1], tol=0.08, tidy=True, sharpen_mm=0.08)
+    _same_section(a, b)
+    assert a['loops'] == b['loops']
+
+
+def test_draw_prims_tidy_is_the_web_scripts_copy():
+    """The add-in's draw_prims_tidy / _nearest_end are the exact text of
+    stl_to_solid.fusion_export._DRAW_TIDY (the X-Ray script's copy)."""
+    fe = pytest.importorskip('stl_to_solid.fusion_export')
+    src = open(os.path.join(ADDIN, 'mssaddin', 'command.py')).read()
+    assert fe._DRAW_TIDY.strip('\n') in src
+
+
+def test_loft_with_rails_is_the_web_scripts_copy():
+    fe = pytest.importorskip('stl_to_solid.fusion_export')
+    rt = fe._XRAY_RAILS_RUNTIME
+    loft = rt[rt.index('def _loft_with_rails('):rt.index('\n\n\ndef _rails_and_loft(')]
+    assert loft in open(os.path.join(ADDIN, 'mssaddin', 'command.py')).read()
+
+
+def test_rails_parity():
+    """trace_rails in the add-in's engine copy gives what stlToSolid gives."""
+    from mssengine import rails as port_rails, section_fit as port
+    ref_rails = pytest.importorskip('stl_to_solid.rails')
+    from stl_to_solid import section_fit as ref
+    m = trimesh.load(conftest.sample('servo_bracket_1.stl'), force='mesh')
+    zs = np.linspace(m.bounds[0, 2] + 1, m.bounds[1, 2] - 1, 5)
+    out = []
+    for sf, rl in ((port, port_rails), (ref, ref_rails)):
+        secs = [sf.section_preview_2d(m.vertices, m.faces, [0, 0, z], [0, 0, 1], tol=0.08) for z in zs]
+        out.append(rl.trace_rails(m.vertices, m.faces, [0, 0, 1], m.bounding_box.centroid,
+                                  [s for s in secs if s['loops']], tol=0.08))
+    assert out[0] == out[1] and out[0]

@@ -13,7 +13,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ADDIN = os.path.dirname(HERE)
-REPO = os.path.join(os.path.dirname(ADDIN), 'stlToSolid')
+# STLTOSOLID_REPO points the tests at another checkout (a worktree)
+REPO = os.environ.get('STLTOSOLID_REPO') or os.path.join(os.path.dirname(ADDIN), 'stlToSolid')
 HAVE_REPO = os.path.isdir(os.path.join(REPO, 'stl_to_solid'))
 for p in (ADDIN, REPO) if HAVE_REPO else (ADDIN,):
     if p not in sys.path:

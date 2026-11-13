@@ -64,7 +64,11 @@ Add-Ins &rarr; Add-Ins</b> tab &rarr; <b>MeshSectionSketch</b> &rarr; Stop / Run
 <tr><td>Join gaps up to</td><td>2.5 mm</td><td>Loose ends closer than this are joined, so an outline broken only by hairline cracks comes back as one closed profile. 0 draws exactly what Fusion's own mesh section draws.</td></tr>
 <tr><td>Trim slivers up to</td><td>0 mm</td><td>Cuts out thin out-and-back slivers where the mesh has a double skin. 0.3 mm is a good start on a leaky mesh; 0 leaves the outline as traced.</td></tr>
 <tr><td>Outline only</td><td>off</td><td>Keep just the outer outline: loose open pieces and inner loops are skipped, so each sketch is one clean profile.</td></tr>
+<tr><td>Tidy corners</td><td>off</td><td>Fillets meet their walls tangent and corners meet exactly. The curves of each loop share their end points and every fillet gets a tangent constraint.</td></tr>
+<tr><td>Sharpen rounds below</td><td>0.08 mm</td><td>Shown with Tidy corners. A round that stays within this of its corner is drawn as the sharp corner. 0 keeps every round.</td></tr>
 <tr><td>Extrude each slice</td><td>off</td><td>Stack and X-Ray: each sketch is extruded to the next slice and joined into one stepped solid body.</td></tr>
+<tr><td>Add 2 rails (90&deg; sections)</td><td>off</td><td>Stack and X-Ray: two cuts along the stack through the mesh centre, drawn as splines pinned onto every slice's outline, ready to use as Loft rails.</td></tr>
+<tr><td>Loft profiles + rails (new body)</td><td>off</td><td>Shown with rails. Lofts one new body through the slices along the rails (best effort; instead of Extrude each slice).</td></tr>
 <tr><td>Hide mesh after</td><td>off</td><td>Hides the mesh body when done. The mesh is never deleted.</td></tr>
 </table>
 

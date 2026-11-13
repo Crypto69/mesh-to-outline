@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy the two engine files from the public stlToSolid checkout into
+"""Copy the engine files from the public stlToSolid checkout into
 mssengine/, verbatim, and check they import nothing but numpy.
 
     python3 tools/sync_engine.py            # copy
@@ -18,7 +18,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)                       # MeshSectionSketch/
 REPO = os.path.join(os.path.dirname(ROOT), 'stlToSolid')   # the public checkout, next to this repo
-FILES = ('profile_fit.py', 'section_fit.py')
+FILES = ('profile_fit.py', 'section_fit.py', 'rails.py')
 FORBIDDEN = re.compile(r'^\s*(import|from)\s+(trimesh|shapely|scipy|cadquery|OCC|OCP|networkx)\b', re.M)
 
 
