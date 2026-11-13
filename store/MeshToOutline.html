@@ -21,7 +21,8 @@
 <p>Mesh to Outline cuts a mesh body with a plane and draws the section as a
 normal sketch of lines, arcs, circles and fitted splines, ready to extrude,
 loft or dimension. It can also draw a whole stack of sections between two
-picks and extrude them into one solid body.</p>
+picks and extrude them into one solid body, or loft one body through them
+along two rails.</p>
 
 <p>It runs only on your computer. It collects no data and needs no internet
 connection. <a href="privacy.html">Privacy policy</a>.</p>
@@ -68,9 +69,28 @@ Add-Ins &rarr; Add-Ins</b> tab &rarr; <b>MeshSectionSketch</b> &rarr; Stop / Run
 <tr><td>Sharpen rounds below</td><td>0.08 mm</td><td>Shown with Tidy corners. A round that stays within this of its corner is drawn as the sharp corner. 0 keeps every round.</td></tr>
 <tr><td>Extrude each slice</td><td>off</td><td>Stack and X-Ray: each sketch is extruded to the next slice and joined into one stepped solid body.</td></tr>
 <tr><td>Add 2 rails (90&deg; sections)</td><td>off</td><td>Stack and X-Ray: two cuts along the stack through the mesh centre, drawn as splines pinned onto every slice's outline, ready to use as Loft rails.</td></tr>
-<tr><td>Loft profiles + rails (new body)</td><td>off</td><td>Shown with rails. Lofts one new body through the slices along the rails (best effort; instead of Extrude each slice).</td></tr>
+<tr><td>Loft profiles + rails (new body)</td><td>off</td><td>Shown with rails. Lofts one new body through the slices along the rails (best effort; instead of Extrude each slice). Up to 60 slices.</td></tr>
 <tr><td>Hide mesh after</td><td>off</td><td>Hides the mesh body when done. The mesh is never deleted.</td></tr>
 </table>
+
+<h2>Tidy corners, rails and loft</h2>
+<p><b>Tidy corners</b> is for parts made of flats and rounds. Without it, each
+curve is fitted on its own, so a fillet can meet its wall at a slight angle or a
+hair apart. With it, the curves of a loop are chained through shared sketch
+points and each fillet is tangent to its walls, so the sketch behaves like one
+you drew. Curves only move where they still fit the mesh within the Fit
+tolerance; anywhere they would not, the plain fit is kept. On organic shapes it
+changes little.</p>
+<p><b>Rails</b> are two extra sections at 90&deg; to the slices, along the stack.
+Where a rail crosses a slice it is pinned onto that slice's outline, which is
+what Fusion's Loft needs. A rail that misses a slice, crosses it twice, or runs
+along an inner wall is still drawn, but it is not used, and the closing message
+says which slices it missed.</p>
+<p><b>Loft</b> joins the largest outline of each slice into one new body, guided
+by every rail that touches all the slices. If Fusion refuses the rails it lofts
+without them; if it refuses that too, the sketches and rails are kept. A loft
+works best when the outline keeps the same shape from slice to slice. Where
+parts appear and disappear along the stack, use Extrude each slice instead.</p>
 
 <h2>Messages you may see</h2>
 <table>
@@ -78,6 +98,11 @@ Add-Ins &rarr; Add-Ins</b> tab &rarr; <b>MeshSectionSketch</b> &rarr; Stop / Run
 <tr><td>Empty cut skipped</td><td>The plane misses the mesh there.</td></tr>
 <tr><td>WARNING: the outline did not close in N slices</td><td>The mesh has holes wider than Join gaps at those slices. Raise Join gaps to the value the warning gives and run again.</td></tr>
 <tr><td>WARNING: N slabs could not be extruded</td><td>The sketch was drawn, but Fusion found no profile to extrude there. The per-slice list says why.</td></tr>
+<tr><td>Tidy corners: N tangent constraint(s) added</td><td>Information: how many fillets were made tangent. "could not be added" counts the ones Fusion refused; those curves are still drawn.</td></tr>
+<tr><td>Rails: N drawn, K touching every slice</td><td>Only the K complete rails guide the loft. The rest are drawn for reference; the list says where they missed.</td></tr>
+<tr><td>Loft: one new body without rails</td><td>Fusion refused the rails (its reason is in brackets) and lofted without them. Check the shape, or use Extrude each slice.</td></tr>
+<tr><td>WARNING: Fusion refused the loft</td><td>The slices change shape too much to loft through. The sketches and rails are kept; use Extrude each slice, or loft a shorter range.</td></tr>
+<tr><td>Loft skipped: N slices is more than 60</td><td>Raise the Spacing or narrow the range.</td></tr>
 <tr><td>Autodesk Fusion has updated its Python</td><td>Update Mesh to Outline from the Autodesk Marketplace.</td></tr>
 <tr><td>Mesh to Outline is incomplete</td><td>Reinstall Mesh to Outline from the Autodesk Marketplace.</td></tr>
 <tr><td>Another add-in has loaded an old copy of numpy</td><td>Turn that add-in off, restart Fusion, and try again.</td></tr>
