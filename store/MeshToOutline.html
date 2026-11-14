@@ -70,6 +70,7 @@ Add-Ins &rarr; Add-Ins</b> tab &rarr; <b>MeshSectionSketch</b> &rarr; Stop / Run
 <tr><td>Extrude each slice</td><td>off</td><td>Stack and X-Ray: each sketch is extruded to the next slice and joined into one stepped solid body.</td></tr>
 <tr><td>Add 2 rails (90&deg; sections)</td><td>off</td><td>Stack and X-Ray: two cuts along the stack through the mesh centre, drawn as splines pinned onto every slice's outline, ready to use as Loft rails.</td></tr>
 <tr><td>Loft profiles + rails (new body)</td><td>off</td><td>Shown with rails. Lofts one new body through the slices along the rails (best effort; instead of Extrude each slice). Up to 60 slices.</td></tr>
+<tr><td>Cut holes into the loft</td><td>on</td><td>Shown with the loft. Fusion's Loft fills holes, so every hole that runs through two or more slices is cut out of the lofted body by a loft of its own.</td></tr>
 <tr><td>Hide mesh after</td><td>off</td><td>Hides the mesh body when done. The mesh is never deleted.</td></tr>
 </table>
 
@@ -88,7 +89,10 @@ along an inner wall is still drawn, but it is not used, and the closing message
 says which slices it missed.</p>
 <p><b>Loft</b> joins the largest outline of each slice into one new body, guided
 by every rail that touches all the slices. If Fusion refuses the rails it lofts
-without them; if it refuses that too, the sketches and rails are kept. A loft
+without them; if it refuses that too, the sketches and rails are kept. Fusion's
+Loft uses each slice's outer outline only and fills the holes (it shows their
+outlines in red); with <b>Cut holes into the loft</b> each hole that runs on
+through two or more slices is cut back out with a loft of its own. A loft
 works best when the outline keeps the same shape from slice to slice. Where
 parts appear and disappear along the stack, use Extrude each slice instead.</p>
 
@@ -101,6 +105,7 @@ parts appear and disappear along the stack, use Extrude each slice instead.</p>
 <tr><td>Tidy corners: N tangent constraint(s) added</td><td>Information: how many fillets were made tangent. "could not be added" counts the ones Fusion refused; those curves are still drawn.</td></tr>
 <tr><td>Rails: N drawn, K touching every slice</td><td>Only the K complete rails guide the loft. The rest are drawn for reference; the list says where they missed.</td></tr>
 <tr><td>Loft: one new body without rails</td><td>Fusion refused the rails (its reason is in brackets) and lofted without them. Check the shape, or use Extrude each slice.</td></tr>
+<tr><td>Holes: N cut into the loft</td><td>Information. "not cut" lists the holes whose outline Fusion did not find in two slices, or whose cut it refused; cut those by hand (Extrude, Cut).</td></tr>
 <tr><td>WARNING: Fusion refused the loft</td><td>The slices change shape too much to loft through. The sketches and rails are kept; use Extrude each slice, or loft a shorter range.</td></tr>
 <tr><td>Loft skipped: N slices is more than 60</td><td>Raise the Spacing or narrow the range.</td></tr>
 <tr><td>Autodesk Fusion has updated its Python</td><td>Update Mesh to Outline from the Autodesk Marketplace.</td></tr>

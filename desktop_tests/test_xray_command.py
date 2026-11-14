@@ -479,3 +479,21 @@ def test_rails_tick_shows_loft(cmd):
     items['mode'].selectedItem.index = command.MODE_ONE
     command._InputChanged().notify(SimpleNamespace(input=SimpleNamespace(id='rails'), inputs=fake))
     assert loft.isVisible is False
+
+
+def test_loft_tick_shows_cut_holes(cmd):
+    """'Cut holes into the loft' shows only with rails + loft, on a stack."""
+    command, _ = cmd
+    rails, loft = SimpleNamespace(value=True), SimpleNamespace(value=True, isVisible=False)
+    holes = SimpleNamespace(isVisible=False)
+    items = {'rails': rails, 'loft': loft, 'loft_holes': holes,
+             'mode': SimpleNamespace(selectedItem=SimpleNamespace(index=command.MODE_XRAY))}
+    fake = SimpleNamespace(itemById=items.get)
+    command._InputChanged().notify(SimpleNamespace(input=SimpleNamespace(id='loft'), inputs=fake))
+    assert loft.isVisible is True and holes.isVisible is True
+    loft.value = False
+    command._InputChanged().notify(SimpleNamespace(input=SimpleNamespace(id='loft'), inputs=fake))
+    assert holes.isVisible is False
+    loft.value, rails.value = True, False
+    command._InputChanged().notify(SimpleNamespace(input=SimpleNamespace(id='rails'), inputs=fake))
+    assert loft.isVisible is False and holes.isVisible is False

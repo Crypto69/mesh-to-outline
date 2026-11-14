@@ -33,7 +33,8 @@ def _build():
     for name in ('CommandCreatedEventHandler', 'CommandEventHandler', 'InputChangedEventHandler'):
         setattr(core, name, type(name, (object,), {}))
     core.DropDownStyles = SimpleNamespace(TextListDropDownStyle=0)
-    fusion.FeatureOperations = SimpleNamespace(NewBodyFeatureOperation=0, JoinFeatureOperation=1)
+    fusion.FeatureOperations = SimpleNamespace(NewBodyFeatureOperation=0, JoinFeatureOperation=1,
+                                               CutFeatureOperation=2)
     adsk.core, adsk.fusion = core, fusion
     adsk.doEvents = lambda: None
     return adsk, core, fusion

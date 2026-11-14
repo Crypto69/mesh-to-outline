@@ -526,13 +526,14 @@ def draw_rails(root, base, rails, notes, np):
     return out
 
 
-# (_loft_with_rails is copied verbatim from the stlToSolid X-Ray script's
-# runtime, fusion_export._XRAY_RAILS_RUNTIME; desktop_tests/test_parity checks)
+# (_loft_with_rails, _hole_profile, _cut_holes and _holes_note are copied
+# verbatim from the stlToSolid X-Ray script's runtime,
+# fusion_export._XRAY_RAILS_RUNTIME; desktop_tests/test_parity checks)
 def _loft_with_rails(root, drawn, rail_curves):
     """Loft one new body through the largest material profile of each
     section sketch, guided by `rail_curves`. Without the rails if Fusion
-    refuses them. Returns how ('with N rails' / 'without rails (why)');
-    raises when Fusion refuses the loft both ways."""
+    refuses them. Returns (how, feature): how = 'with N rails' / 'without
+    rails (why)'; raises when Fusion refuses the loft both ways."""
     profs = []
     for sk, sec in drawn:
         areas = [a / 100.0 for a in (sec.get('areas_mm2') or [])]
@@ -554,17 +555,80 @@ def _loft_with_rails(root, drawn, rail_curves):
     why = None
     if rail_curves:
         try:
-            attempt(rail_curves)
-            return 'with %d rail(s)' % len(rail_curves)
+            return 'with %d rail(s)' % len(rail_curves), attempt(rail_curves)
         except Exception:
             why = traceback.format_exc().strip().splitlines()[-1]
-    attempt([])
-    return 'without rails (%s)' % why if why else 'without rails'
+    feat = attempt([])
+    return ('without rails (%s)' % why if why else 'without rails'), feat
 
 
-def _rails_and_loft(root, base, normal, rails, drawn, loft, np):
-    """After the slices: draw the rails, then (loft) the loft. Returns the
-    lines for the closing message."""
+def _hole_profile(sk, area_cm2, c_cm):
+    """The profile of `sk` that is the inside of the hole with area
+    `area_cm2` and centroid `c_cm` (a Point3D in model space): area within
+    5 %, centroid within a quarter of the hole's radius. None if none."""
+    best, bd = None, None
+    for i in range(sk.profiles.count):
+        p = sk.profiles.item(i)
+        a = _area(p)
+        if a is None or abs(a - area_cm2) > 0.05 * area_cm2:
+            continue
+        try:
+            c = p.areaProperties().centroid
+        except Exception:
+            continue
+        # the centroid may come back in sketch space: take the nearer reading
+        d = min(c.distanceTo(c_cm), sk.sketchToModelSpace(c).distanceTo(c_cm))
+        if bd is None or d < bd:
+            best, bd = p, d
+    if best is None or bd > 0.25 * (area_cm2 / 3.14159265) ** 0.5 + 0.005:
+        return None
+    return best
+
+
+def _cut_holes(root, sketch_at, body, chains):
+    """Cut each hole chain (rails.hole_chains: [[section index, area mm2,
+    centroid mm], ...]) out of `body` with a loft through the hole's
+    profiles in the sketches `sketch_at` maps section indexes to. Returns
+    (holes cut, [why each other one was not])."""
+    lofts = root.features.loftFeatures
+    made, missed = 0, []
+    for n, chain in enumerate(chains):
+        profs = []
+        for k, area, c in chain:
+            sk = sketch_at.get(k)
+            if sk is None:
+                continue
+            p = _hole_profile(sk, area / 100.0, adsk.core.Point3D.create(c[0] / 10.0, c[1] / 10.0, c[2] / 10.0))
+            if p is not None:
+                profs.append(p)
+        if len(profs) < 2:
+            missed.append('hole %d: its outline was not found in two slices' % (n + 1))
+            continue
+        try:
+            li = lofts.createInput(adsk.fusion.FeatureOperations.CutFeatureOperation)
+            for p in profs:
+                li.loftSections.add(p)
+            li.isSolid = True
+            if body is not None:
+                li.participantBodies = [body]
+            lofts.add(li)
+            made += 1
+        except Exception:
+            missed.append('hole %d: %s' % (n + 1, traceback.format_exc().strip().splitlines()[-1]))
+    return made, missed
+
+
+def _holes_note(made, missed):
+    s = 'Holes: %d cut into the loft' % made
+    if missed:
+        s += '; %d not cut (%s%s)' % (len(missed), '; '.join(missed[:3]), ' ...' if len(missed) > 3 else '')
+    return s
+
+
+def _rails_and_loft(root, base, normal, rails, drawn, loft, np, holes=None, sketch_at=None):
+    """After the slices: draw the rails, then (loft) the loft, then cut
+    `holes` (rails.hole_chains over the slices, indexed like `sketch_at`)
+    out of it. Returns the lines for the closing message."""
     notes = []
     curves = draw_rails(root, base, rails, notes, np)
     done = [c for r, c in curves if r['complete']]
@@ -586,10 +650,20 @@ def _rails_and_loft(root, base, normal, rails, drawn, loft, np):
         notes.append('Loft skipped: a slice has no closed outline')
     else:
         try:
-            notes.insert(0, 'Loft: one new body ' + _loft_with_rails(root, drawn, done))
+            how, feat = _loft_with_rails(root, drawn, done)
+            notes.insert(0, 'Loft: one new body ' + how)
         except Exception:
             why = traceback.format_exc().strip().splitlines()[-1]
             notes.insert(0, 'WARNING: Fusion refused the loft ({}); the sketches and rails are kept'.format(why))
+            return notes
+        if holes:
+            body = None
+            try:
+                if feat is not None and feat.bodies.count:
+                    body = feat.bodies.item(0)
+            except Exception:
+                pass
+            notes.insert(1, _holes_note(*_cut_holes(root, sketch_at or {}, body, holes)))
     return notes
 
 
@@ -798,6 +872,10 @@ class _CommandCreated(adsk.core.CommandCreatedEventHandler):
             lf.tooltip = ('After the sketches, loft one new body through the slices along the rails '
                           '(best effort; instead of Extrude each slice)')
             lf.isVisible = False
+            lh = inputs.addBoolValueInput('loft_holes', 'Cut holes into the loft', True, '', True)
+            lh.tooltip = ('Fusion\'s Loft fills holes: every hole that runs through two or more slices '
+                          'is cut out of the lofted body by a loft of its own')
+            lh.isVisible = False
             # the mesh picked last time may be gone or changed
             _mesh_cache.clear()
             inputs.addBoolValueInput('hide_mesh', 'Hide mesh after', True, '', False)
@@ -831,9 +909,13 @@ class _InputChanged(adsk.core.InputChangedEventHandler):
                     if k not in show:
                         pick.clearSelection()
                     pick.setSelectionLimits(1 if k in show else 0, 1)
-            if iid in ('mode', 'rails'):
+            if iid in ('mode', 'rails', 'loft'):
                 rl = adsk.core.BoolValueCommandInput.cast(inputs.itemById('rails'))
+                lf = adsk.core.BoolValueCommandInput.cast(inputs.itemById('loft'))
                 inputs.itemById('loft').isVisible = mode != MODE_ONE and bool(rl.value)
+                lh = inputs.itemById('loft_holes')
+                if lh is not None:
+                    lh.isVisible = mode != MODE_ONE and bool(rl.value) and bool(lf.value)
             if iid == 'tidy':
                 td = adsk.core.BoolValueCommandInput.cast(inputs.itemById('tidy'))
                 inputs.itemById('sharpen').isVisible = bool(td.value)
@@ -887,6 +969,8 @@ class _Execute(adsk.core.CommandEventHandler):
         extrude = adsk.core.BoolValueCommandInput.cast(inputs.itemById('extrude')).value
         want_rails = bool(adsk.core.BoolValueCommandInput.cast(inputs.itemById('rails')).value)
         want_loft = bool(adsk.core.BoolValueCommandInput.cast(inputs.itemById('loft')).value)
+        lh_in = inputs.itemById('loft_holes')
+        want_holes = bool(adsk.core.BoolValueCommandInput.cast(lh_in).value) if lh_in is not None else True
         if tol_mm <= 0:
             _msg('The fit tolerance must be positive.')
             return
@@ -981,6 +1065,7 @@ class _Execute(adsk.core.CommandEventHandler):
         failed = []                      # sketches whose slab could not be extruded
         slice_stats = []                 # (offset label, stats) per cut, for the open-outline warning
         pre, rail_list, drawn_secs, rail_notes = None, [], [], []
+        lifted, sketch_at = [None] * len(offs_cm), {}     # per slice index: for the loft's holes
         try:
             if rails:
                 # every slice first, then the rails (they add their crossings
@@ -1053,6 +1138,7 @@ class _Execute(adsk.core.CommandEventHandler):
                     sk.isComputeDeferred = False
                 made += 1
                 drawn_secs.append((sk, sec))
+                lifted[i], sketch_at[i] = sec, sk
                 if exts_cm[i] is not None:
                     try:
                         areas = [a / 100.0 for a in sec.get('areas_mm2', [])]
@@ -1076,7 +1162,12 @@ class _Execute(adsk.core.CommandEventHandler):
                 except Exception:
                     pass
         if rails and not cancelled:
-            rail_notes = _rails_and_loft(root, plane_ent, normal, rail_list, drawn_secs, loft, np)
+            chains = []
+            if loft and want_holes:
+                from mssengine import rails as rails_mod
+                chains = rails_mod.hole_chains(lifted)
+            rail_notes = _rails_and_loft(root, plane_ent, normal, rail_list, drawn_secs, loft, np,
+                                         holes=chains, sketch_at=sketch_at)
         if made and hide_mesh:
             try:
                 mesh_body.isLightBulbOn = False
